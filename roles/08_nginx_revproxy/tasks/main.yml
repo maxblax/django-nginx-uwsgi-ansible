@@ -1,0 +1,141 @@
+---
+# ============================================
+# Nginx Reverse Proxy Setup
+# ============================================
+# This role installs Nginx on the host (not Docker)
+# and configures it as a reverse proxy for staging and production
+
+- name: Install Nginx
+  apt:
+    name:
+      - nginx
+      - certbot
+      - python3-certbot-nginx
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: Ensure Nginx is started and enabled
+  service:
+    name: nginx
+    state: started
+    enabled: yes
+  become: yes
+
+- name: Create Nginx configuration directory for sites
+  file:
+    path: /etc/nginx/sites-available
+    state: directory
+    mode: '0755'
+  become: yes
+
+- name: Create Nginx sites-enabled directory
+  file:
+    path: /etc/nginx/sites-enabled
+    state: directory
+    mode: '0755'
+  become: yes
+
+- name: Remove default Nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  become: yes
+  notify: reload nginx
+
+- name: Configure main Nginx settings
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  notify: reload nginx
+
+- name: Create upstream configuration for staging
+  template:
+    src: staging_upstream.conf.j2
+    dest: /etc/nginx/conf.d/staging_upstream.conf
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  notify: reload nginx
+  when: project_config.domains.staging.enabled
+
+- name: Create upstream configuration for production
+  template:
+    src: production_upstream.conf.j2
+    dest: /etc/nginx/conf.d/production_upstream.conf
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  notify: reload nginx
+  when: project_config.domains.production.enabled
+
+- name: Configure staging site (HTTP only initially)
+  template:
+    src: staging_site.conf.j2
+    dest: /etc/nginx/sites-available/staging
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  notify: reload nginx
+  when: project_config.domains.staging.enabled
+
+- name: Configure production site (HTTP only initially)
+  template:
+    src: production_site.conf.j2
+    dest: /etc/nginx/sites-available/production
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  notify: reload nginx
+  when: project_config.domains.production.enabled
+
+- name: Enable staging site
+  file:
+    src: /etc/nginx/sites-available/staging
+    dest: /etc/nginx/sites-enabled/staging
+    state: link
+  become: yes
+  notify: reload nginx
+  when: project_config.domains.staging.enabled
+
+- name: Enable production site
+  file:
+    src: /etc/nginx/sites-available/production
+    dest: /etc/nginx/sites-enabled/production
+    state: link
+  become: yes
+  notify: reload nginx
+  when: project_config.domains.production.enabled
+
+- name: Create directory for Let's Encrypt challenges
+  file:
+    path: /var/www/certbot
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  become: yes
+
+- name: Test Nginx configuration
+  command: nginx -t
+  become: yes
+  changed_when: false
+
+- name: Display Nginx configuration status
+  debug:
+    msg: |
+      Nginx reverse proxy configured.
+      Staging: {{ project_config.domains.staging.domain if project_config.domains.staging.enabled else 'disabled' }}
+      Production: {{ project_config.domains.production.domain if project_config.domains.production.enabled else 'disabled' }}
+
+      To enable SSL, run certbot manually:
+      sudo certbot --nginx -d {{ project_config.domains.staging.domain }}
+      sudo certbot --nginx -d {{ project_config.domains.production.domain }}

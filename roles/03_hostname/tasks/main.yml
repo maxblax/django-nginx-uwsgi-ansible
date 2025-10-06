@@ -1,0 +1,22 @@
+---
+# ============================================
+# Hostname Configuration Tasks
+# ============================================
+
+- name: Set hostname
+  hostname:
+    name: "{{ project_config.server.hostname }}"
+  become: yes
+
+- name: Update /etc/hosts
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1'
+    line: "127.0.1.1 {{ project_config.server.hostname }}"
+    state: present
+  become: yes
+
+- name: Set timezone
+  timezone:
+    name: "{{ project_config.server.timezone }}"
+  become: yes

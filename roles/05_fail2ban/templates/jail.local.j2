@@ -1,0 +1,42 @@
+# Fail2Ban configuration
+# {{ ansible_managed }}
+
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+destemail = root@localhost
+sendername = Fail2Ban
+action = %(action_)s
+
+[sshd]
+enabled = true
+port = {{ project_config.server.ssh_port | default('22') }}
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = {{ project_config.security.fail2ban.ssh_maxretry | default(3) }}
+bantime = {{ project_config.security.fail2ban.ssh_bantime | default(3600) }}
+
+[nginx-http-auth]
+enabled = true
+port = http,https
+filter = nginx-http-auth
+logpath = /var/log/nginx/error.log
+maxretry = {{ project_config.security.fail2ban.nginx_maxretry | default(5) }}
+bantime = {{ project_config.security.fail2ban.nginx_bantime | default(600) }}
+
+[nginx-limit-req]
+enabled = true
+port = http,https
+filter = nginx-limit-req
+logpath = /var/log/nginx/error.log
+maxretry = {{ project_config.security.fail2ban.nginx_maxretry | default(5) }}
+bantime = {{ project_config.security.fail2ban.nginx_bantime | default(600) }}
+
+[nginx-botsearch]
+enabled = true
+port = http,https
+filter = nginx-botsearch
+logpath = /var/log/nginx/access.log
+maxretry = 2
+bantime = 7200

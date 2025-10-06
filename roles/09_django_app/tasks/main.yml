@@ -1,0 +1,121 @@
+---
+# ============================================
+# Django Application Deployment
+# ============================================
+# This role deploys Django to staging or production using Docker Swarm
+
+- name: Set environment-specific variables
+  set_fact:
+    env_name: "{{ environment }}"
+    env_config: "{{ project_config.django[environment] }}"
+    env_domain: "{{ project_config.domains[environment] }}"
+    env_services: "{{ project_config.services }}"
+    stack_name: "{{ environment }}_django"
+    stack_root: "/opt/{{ environment }}_django"
+    data_root: "/data/{{ environment }}"
+
+- name: Display deployment information
+  debug:
+    msg: |
+      Deploying {{ env_name }} environment:
+      - Stack: {{ stack_name }}
+      - Domain: {{ env_domain.domain }}
+      - Image: {{ env_config.docker_image }}
+      - Replicas: {{ env_config.replicas }}
+
+- name: Create stack directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: docker
+    group: docker
+    mode: '0750'
+  loop:
+    - "{{ stack_root }}"
+    - "{{ data_root }}/static"
+    - "{{ data_root }}/media"
+    - "{{ data_root }}/redis"
+  become: yes
+
+- name: Create environment file
+  template:
+    src: env.j2
+    dest: "{{ stack_root }}/.env"
+    owner: docker
+    group: docker
+    mode: '0600'
+  become: yes
+
+- name: Template Docker Compose file
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ stack_root }}/docker-compose.yml"
+    owner: docker
+    group: docker
+    mode: '0640'
+  become: yes
+  become_user: docker
+
+- name: Pull Docker images
+  docker_image:
+    name: "{{ env_config.docker_image }}"
+    source: pull
+  become: yes
+  ignore_errors: yes
+
+- name: Deploy stack using Docker Compose
+  community.docker.docker_stack:
+    state: present
+    name: "{{ stack_name }}"
+    compose:
+      - "{{ stack_root }}/docker-compose.yml"
+  become: yes
+  become_user: docker
+
+- name: Wait for stack to be deployed
+  pause:
+    seconds: 10
+
+- name: Get list of services in the stack
+  command: docker stack services {{ stack_name }} --format '{{"{{"}}.Name{{"}}"}}'
+  register: stack_services
+  become: yes
+  changed_when: false
+
+- name: Display stack services
+  debug:
+    var: stack_services.stdout_lines
+
+- name: Check services status in the Docker stack
+  shell: |
+    docker stack ps {{ stack_name }} --format '{{"{{"}}.Name{{"}}"}}: {{"{{"}}.CurrentState{{"}}"}}'
+  register: services_status
+  become: yes
+  changed_when: false
+  ignore_errors: yes
+
+- name: Display services status
+  debug:
+    var: services_status.stdout_lines
+  when: services_status is defined
+
+- name: Display deployment summary
+  debug:
+    msg: |
+      ========================================
+      Deployment completed for {{ env_name }}!
+      ========================================
+
+      Stack name: {{ stack_name }}
+      Domain: {{ env_domain.domain }}
+
+      Check status:
+        docker stack ps {{ stack_name }}
+
+      View logs:
+        docker service logs {{ stack_name }}_app -f
+
+      Scale services:
+        docker service scale {{ stack_name }}_app={{ env_config.replicas }}
+
+      ========================================

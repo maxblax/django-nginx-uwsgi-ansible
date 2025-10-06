@@ -1,0 +1,7 @@
+# Production Upstream Configuration
+# {{ ansible_managed }}
+
+upstream production_django {
+    server 127.0.0.1:{{ project_config.django.production.port }};
+    keepalive 32;
+}

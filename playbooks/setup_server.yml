@@ -1,0 +1,84 @@
+---
+# ============================================
+# Complete Server Setup Playbook
+# ============================================
+# This playbook performs the complete setup of a fresh server:
+# - User management
+# - Package installation
+# - Firewall configuration
+# - Fail2ban setup
+# - PostgreSQL installation and database creation
+# - Docker and Swarm setup
+# - Nginx reverse proxy installation
+
+- name: Complete Server Setup
+  hosts: django_server
+  become: yes
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Load project configuration
+      include_vars:
+        file: "{{ playbook_dir }}/../project_config.yml"
+        name: project_config
+
+    - name: Display server information
+      debug:
+        msg: "Setting up server: {{ project_config.server.hostname }} ({{ project_config.server.ip_address }})"
+
+  roles:
+    - role: 01_user_management
+      tags: ['users', 'setup']
+
+    - role: 02_packages
+      tags: ['packages', 'setup']
+
+    - role: 03_hostname
+      tags: ['hostname', 'setup']
+
+    - role: 04_firewall
+      tags: ['firewall', 'security', 'setup']
+
+    - role: 05_fail2ban
+      tags: ['fail2ban', 'security', 'setup']
+
+    - role: 06_postgresql
+      tags: ['postgresql', 'database', 'setup']
+
+    - role: 07_docker_swarm
+      tags: ['docker', 'swarm', 'setup']
+
+    - role: 08_nginx_revproxy
+      tags: ['nginx', 'revproxy', 'setup']
+
+  post_tasks:
+    - name: Display setup completion message
+      debug:
+        msg: |
+          ========================================
+          Server setup completed successfully!
+          ========================================
+          Hostname: {{ project_config.server.hostname }}
+          IP: {{ project_config.server.ip_address }}
+
+          Services installed:
+          - PostgreSQL {{ project_config.services.postgresql.version }}
+          - Docker & Swarm
+          - Nginx reverse proxy
+          - Firewall (UFW)
+          - Fail2ban
+
+          Next step: Deploy your Django application
+          - ansible-playbook playbooks/deploy_staging.yml
+          - ansible-playbook playbooks/deploy_production.yml
+          ========================================
+
+    - name: Reboot server if required
+      reboot:
+        msg: "Reboot initiated by Ansible for setup completion"
+        connect_timeout: 5
+        reboot_timeout: 300
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+        test_command: uptime
+      when: reboot_required is defined and reboot_required

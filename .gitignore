@@ -1,0 +1,29 @@
+# Ansible
+*.retry
+.vault_pass
+group_vars/all/vault.yml
+group_vars/all/vars.yml
+inventory/hosts
+
+# Generated files
+project_config.yml
+
+# Python
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

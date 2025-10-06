@@ -1,0 +1,6 @@
+# Fail2Ban filter for nginx limit_req
+# {{ ansible_managed }}
+
+[Definition]
+failregex = limiting requests, excess:.* by zone.*client: <HOST>
+ignoreregex =

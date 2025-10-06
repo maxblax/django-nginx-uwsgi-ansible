@@ -1,0 +1,75 @@
+---
+# ============================================
+# Firewall Configuration Tasks (UFW)
+# ============================================
+
+- name: Reset UFW to default
+  ufw:
+    state: reset
+  become: yes
+  when: project_config.security.firewall.enabled
+
+- name: Set UFW default policy (deny incoming)
+  ufw:
+    direction: incoming
+    policy: deny
+  become: yes
+  when: project_config.security.firewall.enabled
+
+- name: Set UFW default policy (allow outgoing)
+  ufw:
+    direction: outgoing
+    policy: allow
+  become: yes
+  when: project_config.security.firewall.enabled
+
+- name: Allow SSH
+  ufw:
+    rule: allow
+    port: '{{ project_config.server.ssh_port | default("22") }}'
+    proto: tcp
+  become: yes
+  when: project_config.security.firewall.enabled
+
+- name: Allow configured ports
+  ufw:
+    rule: allow
+    port: '{{ item }}'
+    proto: tcp
+  loop: "{{ project_config.security.firewall.allowed_ports }}"
+  become: yes
+  when:
+    - project_config.security.firewall.enabled
+    - project_config.security.firewall.allowed_ports is defined
+
+- name: Allow from specific IPs (if configured)
+  ufw:
+    rule: allow
+    from_ip: '{{ item }}'
+  loop: "{{ project_config.security.firewall.allowed_ips }}"
+  become: yes
+  when:
+    - project_config.security.firewall.enabled
+    - project_config.security.firewall.allowed_ips is defined
+    - project_config.security.firewall.allowed_ips | length > 0
+
+- name: Enable UFW
+  ufw:
+    state: enabled
+    logging: 'on'
+  become: yes
+  when: project_config.security.firewall.enabled
+
+- name: Display firewall status
+  command: ufw status verbose
+  register: ufw_status
+  changed_when: false
+  become: yes
+  when: project_config.security.firewall.enabled
+
+- name: Show firewall status
+  debug:
+    var: ufw_status.stdout_lines
+  when:
+    - project_config.security.firewall.enabled
+    - ufw_status is defined

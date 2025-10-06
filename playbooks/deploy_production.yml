@@ -1,0 +1,60 @@
+---
+# ============================================
+# Deploy Production Environment
+# ============================================
+# This playbook deploys the Django application to production
+
+- name: Deploy Production Environment
+  hosts: django_server
+  become: yes
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Load project configuration
+      include_vars:
+        file: "{{ playbook_dir }}/../project_config.yml"
+        name: project_config
+
+    - name: Check if production is enabled
+      fail:
+        msg: "Production environment is not enabled in project_config.yml"
+      when: not project_config.domains.production.enabled
+
+    - name: Display deployment information
+      debug:
+        msg: |
+          ⚠️  DEPLOYING TO PRODUCTION ⚠️
+          Domain: {{ project_config.domains.production.domain }}
+          Image: {{ project_config.django.production.docker_image }}
+          Replicas: {{ project_config.django.production.replicas }}
+
+    - name: Confirm production deployment
+      pause:
+        prompt: "Are you sure you want to deploy to PRODUCTION? Press ENTER to continue or Ctrl+C to cancel"
+      when: not (ansible_check_mode | default(false))
+
+  roles:
+    - role: 09_django_app
+      vars:
+        environment: production
+        django_env: production
+      tags: ['deploy', 'production']
+
+  post_tasks:
+    - name: Display deployment completion message
+      debug:
+        msg: |
+          ========================================
+          Production deployment completed!
+          ========================================
+          Domain: {{ project_config.domains.production.domain }}
+
+          Check deployment status:
+          docker stack ps production_django
+
+          View logs:
+          docker service logs production_django_app -f
+
+          Monitor with Flower (if enabled):
+          https://{{ project_config.domains.production.domain }}/flower
+          ========================================

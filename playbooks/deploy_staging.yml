@@ -1,0 +1,52 @@
+---
+# ============================================
+# Deploy Staging Environment
+# ============================================
+# This playbook deploys the Django application to staging
+
+- name: Deploy Staging Environment
+  hosts: django_server
+  become: yes
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Load project configuration
+      include_vars:
+        file: "{{ playbook_dir }}/../project_config.yml"
+        name: project_config
+
+    - name: Check if staging is enabled
+      fail:
+        msg: "Staging environment is not enabled in project_config.yml"
+      when: not project_config.domains.staging.enabled
+
+    - name: Display deployment information
+      debug:
+        msg: |
+          Deploying staging environment:
+          Domain: {{ project_config.domains.staging.domain }}
+          Image: {{ project_config.django.staging.docker_image }}
+          Replicas: {{ project_config.django.staging.replicas }}
+
+  roles:
+    - role: 09_django_app
+      vars:
+        environment: staging
+        django_env: staging
+      tags: ['deploy', 'staging']
+
+  post_tasks:
+    - name: Display deployment completion message
+      debug:
+        msg: |
+          ========================================
+          Staging deployment completed!
+          ========================================
+          Domain: {{ project_config.domains.staging.domain }}
+
+          Check deployment status:
+          docker stack ps staging_django
+
+          View logs:
+          docker service logs staging_django_app -f
+          ========================================

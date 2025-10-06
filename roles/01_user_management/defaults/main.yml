@@ -1,0 +1,11 @@
+---
+# Default variables for user management
+
+ansible_user_name: ansible
+ansible_user_shell: /bin/bash
+ansible_user_groups:
+  - sudo
+  - docker
+
+# SSH public key path (update this to your key)
+ansible_user_ssh_key_path: "~/.ssh/ansible_rsa.pub"

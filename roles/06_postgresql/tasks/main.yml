@@ -1,0 +1,123 @@
+---
+# ============================================
+# PostgreSQL Installation and Setup
+# ============================================
+# This role installs PostgreSQL on the host (not Docker)
+# and creates separate databases for staging and production
+
+- name: Install PostgreSQL and dependencies
+  apt:
+    name:
+      - postgresql
+      - postgresql-contrib
+      - python3-psycopg2
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: Ensure PostgreSQL is started and enabled
+  service:
+    name: postgresql
+    state: started
+    enabled: yes
+  become: yes
+
+- name: Configure PostgreSQL to listen on localhost only
+  lineinfile:
+    path: "/etc/postgresql/{{ project_config.services.postgresql.version }}/main/postgresql.conf"
+    regexp: '^#?listen_addresses'
+    line: "listen_addresses = 'localhost'"
+    state: present
+  become: yes
+  notify: restart postgresql
+
+- name: Configure PostgreSQL authentication (md5 for local connections)
+  template:
+    src: pg_hba.conf.j2
+    dest: "/etc/postgresql/{{ project_config.services.postgresql.version }}/main/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: '0640'
+  become: yes
+  notify: restart postgresql
+
+- name: Ensure PostgreSQL is running
+  service:
+    name: postgresql
+    state: started
+  become: yes
+
+# Staging Database
+- name: Create staging database user
+  postgresql_user:
+    name: "{{ project_config.services.postgresql.staging_user }}"
+    password: "{{ postgres_staging_password }}"
+    role_attr_flags: CREATEDB,NOSUPERUSER
+  become: yes
+  become_user: postgres
+  when: project_config.domains.staging.enabled
+
+- name: Create staging database
+  postgresql_db:
+    name: "{{ project_config.services.postgresql.staging_db }}"
+    owner: "{{ project_config.services.postgresql.staging_user }}"
+    encoding: UTF-8
+    lc_collate: en_US.UTF-8
+    lc_ctype: en_US.UTF-8
+    template: template0
+  become: yes
+  become_user: postgres
+  when: project_config.domains.staging.enabled
+
+- name: Grant staging user all privileges on staging database
+  postgresql_privs:
+    database: "{{ project_config.services.postgresql.staging_db }}"
+    roles: "{{ project_config.services.postgresql.staging_user }}"
+    privs: ALL
+    type: database
+  become: yes
+  become_user: postgres
+  when: project_config.domains.staging.enabled
+
+# Production Database
+- name: Create production database user
+  postgresql_user:
+    name: "{{ project_config.services.postgresql.production_user }}"
+    password: "{{ postgres_production_password }}"
+    role_attr_flags: CREATEDB,NOSUPERUSER
+  become: yes
+  become_user: postgres
+  when: project_config.domains.production.enabled
+
+- name: Create production database
+  postgresql_db:
+    name: "{{ project_config.services.postgresql.production_db }}"
+    owner: "{{ project_config.services.postgresql.production_user }}"
+    encoding: UTF-8
+    lc_collate: en_US.UTF-8
+    lc_ctype: en_US.UTF-8
+    template: template0
+  become: yes
+  become_user: postgres
+  when: project_config.domains.production.enabled
+
+- name: Grant production user all privileges on production database
+  postgresql_privs:
+    database: "{{ project_config.services.postgresql.production_db }}"
+    roles: "{{ project_config.services.postgresql.production_user }}"
+    privs: ALL
+    type: database
+  become: yes
+  become_user: postgres
+  when: project_config.domains.production.enabled
+
+- name: Display PostgreSQL databases
+  postgresql_query:
+    query: SELECT datname FROM pg_database WHERE datistemplate = false;
+  become: yes
+  become_user: postgres
+  register: pg_databases
+
+- name: Show created databases
+  debug:
+    msg: "PostgreSQL databases: {{ pg_databases.query_result | map(attribute='datname') | list }}"

@@ -1,0 +1,55 @@
+---
+# ============================================
+# Fail2ban Configuration Tasks
+# ============================================
+
+- name: Ensure fail2ban is installed
+  apt:
+    name: fail2ban
+    state: present
+  become: yes
+  when: project_config.security.fail2ban.enabled
+
+- name: Create fail2ban local jail configuration
+  template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  notify: restart fail2ban
+  when: project_config.security.fail2ban.enabled
+
+- name: Create nginx fail2ban filter
+  template:
+    src: nginx-limit-req.conf.j2
+    dest: /etc/fail2ban/filter.d/nginx-limit-req.conf
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  notify: restart fail2ban
+  when: project_config.security.fail2ban.enabled
+
+- name: Ensure fail2ban is started and enabled
+  service:
+    name: fail2ban
+    state: started
+    enabled: yes
+  become: yes
+  when: project_config.security.fail2ban.enabled
+
+- name: Display fail2ban status
+  command: fail2ban-client status
+  register: fail2ban_status
+  changed_when: false
+  become: yes
+  when: project_config.security.fail2ban.enabled
+
+- name: Show fail2ban status
+  debug:
+    var: fail2ban_status.stdout_lines
+  when:
+    - project_config.security.fail2ban.enabled
+    - fail2ban_status is defined

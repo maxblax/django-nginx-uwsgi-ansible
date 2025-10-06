@@ -1,0 +1,7 @@
+# Staging Upstream Configuration
+# {{ ansible_managed }}
+
+upstream staging_django {
+    server 127.0.0.1:{{ project_config.django.staging.port }};
+    keepalive 32;
+}

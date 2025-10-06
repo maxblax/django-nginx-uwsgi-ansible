@@ -1,0 +1,136 @@
+---
+# ============================================
+# Docker and Docker Swarm Setup
+# ============================================
+
+- name: Add Docker GPG key
+  apt_key:
+    url: https://download.docker.com/linux/debian/gpg
+    state: present
+  become: yes
+
+- name: Add Docker repository
+  apt_repository:
+    repo: "deb [arch=amd64] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+    state: present
+  become: yes
+
+- name: Install Docker
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: Ensure Docker group exists
+  group:
+    name: docker
+    state: present
+  become: yes
+
+- name: Add ansible user to docker group
+  user:
+    name: ansible
+    groups: docker
+    append: yes
+  become: yes
+
+- name: Create Docker data directory
+  file:
+    path: "{{ project_config.services.docker.data_root }}"
+    state: directory
+    mode: '0755'
+  become: yes
+
+- name: Configure Docker daemon
+  template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  notify: restart docker
+
+- name: Ensure Docker service is started and enabled
+  service:
+    name: docker
+    state: started
+    enabled: yes
+  become: yes
+
+- name: Check if Swarm is already initialized
+  command: docker info --format '{{ '{{' }}.Swarm.LocalNodeState{{ '}}' }}'
+  register: swarm_status
+  changed_when: false
+  become: yes
+
+- name: Initialize Docker Swarm (single-node)
+  command: docker swarm init --advertise-addr {{ project_config.server.ip_address }}
+  become: yes
+  when: swarm_status.stdout != "active"
+
+- name: Get Swarm node ID
+  command: docker info --format '{{ '{{' }}.Swarm.NodeID{{ '}}' }}'
+  register: swarm_node_id
+  changed_when: false
+  become: yes
+
+- name: Label node for app placement
+  command: docker node update --label-add role_app=true {{ swarm_node_id.stdout }}
+  become: yes
+  when: swarm_node_id.stdout != ""
+
+- name: Label node for Redis placement
+  command: docker node update --label-add role_redis=true {{ swarm_node_id.stdout }}
+  become: yes
+  when: swarm_node_id.stdout != ""
+
+- name: Label node for Celery placement
+  command: docker node update --label-add role_celery=true {{ swarm_node_id.stdout }}
+  become: yes
+  when: swarm_node_id.stdout != ""
+
+- name: Create Docker networks
+  docker_network:
+    name: "{{ item }}"
+    driver: overlay
+    attachable: yes
+    state: present
+  loop:
+    - staging_network
+    - production_network
+  become: yes
+  when: swarm_status.stdout == "active" or swarm_node_id.stdout != ""
+
+- name: Create directories for Docker stacks
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: docker
+    group: docker
+    mode: '0750'
+  loop:
+    - /opt/staging_django
+    - /opt/production_django
+    - /data/staging
+    - /data/production
+    - /data/staging/static
+    - /data/staging/media
+    - /data/production/static
+    - /data/production/media
+  become: yes
+
+- name: Display Docker and Swarm info
+  command: docker info --format '{{ '{{' }}json .{{ '}}' }}'
+  register: docker_info
+  changed_when: false
+  become: yes
+
+- name: Show Docker status
+  debug:
+    msg: "Docker Swarm initialized in single-node mode"

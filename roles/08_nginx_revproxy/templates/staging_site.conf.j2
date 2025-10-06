@@ -1,0 +1,56 @@
+# Staging Site Configuration
+# {{ ansible_managed }}
+
+server {
+    listen 80;
+    server_name {{ project_config.domains.staging.domain }};
+
+    # Let's Encrypt challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Static files
+    location /static/ {
+        alias /data/staging/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Media files
+    location /media/ {
+        alias /data/staging/media/;
+        expires 7d;
+    }
+
+    # Proxy to Django
+    location / {
+        proxy_pass http://staging_django;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+
+        # Rate limiting
+        limit_req zone=general burst=20 nodelay;
+    }
+
+    # API rate limiting
+    location /api/ {
+        proxy_pass http://staging_django;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        limit_req zone=api burst=50 nodelay;
+    }
+}
+
+# HTTPS configuration will be added by certbot

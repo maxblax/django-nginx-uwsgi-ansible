@@ -1,0 +1,41 @@
+# ============================================
+# Ansible Vault - Secrets
+# ============================================
+# This file should be encrypted with: ansible-vault encrypt group_vars/all/vault.yml
+
+# PostgreSQL Passwords
+postgres_root_password: "CHANGE_ME_STRONG_PASSWORD"
+postgres_staging_password: "CHANGE_ME_STAGING_DB_PASSWORD"
+postgres_production_password: "CHANGE_ME_PRODUCTION_DB_PASSWORD"
+
+# Django Secret Keys (generate with: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')
+django_secret_key_staging: "CHANGE_ME_STAGING_SECRET_KEY"
+django_secret_key_production: "CHANGE_ME_PRODUCTION_SECRET_KEY"
+
+# API Keys (optional - add as needed)
+openai_api_key: ""
+stripe_secret_key: ""
+stripe_webhook_secret: ""
+groq_api_key: ""
+google_client_id: ""
+google_client_secret: ""
+
+# Email Configuration (optional)
+email_host_user: ""
+email_host_password: ""
+
+# JWT Configuration
+jwt_secret_key_staging: "CHANGE_ME_JWT_STAGING"
+jwt_secret_key_production: "CHANGE_ME_JWT_PRODUCTION"
+
+# Flower (Celery monitoring) Basic Auth
+flower_username: "admin"
+flower_password: "CHANGE_ME_FLOWER_PASSWORD"
+
+# Docker Registry (if private)
+docker_registry_username: ""
+docker_registry_password: ""
+
+# Custom secrets (add your own as needed)
+# custom_api_key: ""
+# custom_secret: ""

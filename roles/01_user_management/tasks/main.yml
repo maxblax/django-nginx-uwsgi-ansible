@@ -1,0 +1,83 @@
+---
+# ============================================
+# User Management Tasks
+# ============================================
+# This role sets up the ansible user with proper permissions
+
+- name: Ensure sudo is installed
+  apt:
+    name: sudo
+    state: present
+    update_cache: yes
+  become: yes
+  become_method: su
+  ignore_errors: yes
+
+- name: Create ansible user
+  user:
+    name: "{{ ansible_user_name }}"
+    shell: "{{ ansible_user_shell }}"
+    create_home: yes
+    state: present
+  become: yes
+
+- name: Add ansible user to sudoers with NOPASSWD
+  lineinfile:
+    path: /etc/sudoers
+    state: present
+    regexp: '^{{ ansible_user_name }} ALL='
+    line: '{{ ansible_user_name }} ALL=(ALL) NOPASSWD: ALL'
+    validate: '/usr/sbin/visudo -cf %s'
+  become: yes
+
+- name: Create .ssh directory for ansible user
+  file:
+    path: "/home/{{ ansible_user_name }}/.ssh"
+    state: directory
+    owner: "{{ ansible_user_name }}"
+    group: "{{ ansible_user_name }}"
+    mode: '0700'
+  become: yes
+
+- name: Add SSH public key for ansible user
+  authorized_key:
+    user: "{{ ansible_user_name }}"
+    state: present
+    key: "{{ lookup('file', ansible_user_ssh_key_path) }}"
+  become: yes
+  when: ansible_user_ssh_key_path is defined
+
+- name: Create docker user for running containers
+  user:
+    name: docker
+    shell: /bin/bash
+    create_home: yes
+    groups: docker
+    append: yes
+    state: present
+  become: yes
+
+- name: Ensure ansible user is in docker group
+  user:
+    name: "{{ ansible_user_name }}"
+    groups: "{{ ansible_user_groups }}"
+    append: yes
+  become: yes
+
+- name: Disable root SSH login
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^PermitRootLogin'
+    line: 'PermitRootLogin no'
+    state: present
+  become: yes
+  notify: restart ssh
+
+- name: Disable password authentication
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^PasswordAuthentication'
+    line: 'PasswordAuthentication no'
+    state: present
+  become: yes
+  notify: restart ssh

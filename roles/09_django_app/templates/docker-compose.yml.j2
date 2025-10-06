@@ -1,0 +1,259 @@
+version: '3.8'
+
+services:
+{% if env_services.redis[env_name].enabled %}
+  redis:
+    image: redis:7-alpine
+    hostname: redis
+    command: redis-server --appendonly no --save "" --maxmemory {{ env_services.redis[env_name].memory_limit }}
+    networks:
+      - internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role_redis == true
+      resources:
+        limits:
+          memory: {{ env_services.redis[env_name].memory_limit }}
+        reservations:
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - redis_data:/data
+
+{% endif %}
+  app:
+    image: {{ env_config.docker_image }}
+    hostname: app
+    networks:
+      - internal
+    ports:
+      - target: 8000
+        published: {{ env_config.port }}
+        mode: host
+    deploy:
+      replicas: {{ env_config.replicas }}
+      placement:
+        constraints:
+          - node.labels.role_app == true
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 5s
+        max_failure_ratio: 0.2
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - {{ data_root }}/static:/app/static
+      - {{ data_root }}/media:/app/media
+    env_file:
+      - {{ stack_root }}/.env
+    environment:
+      - APP_ROLE=web
+      - GUNICORN_WORKERS={{ env_config.workers }}
+      - GUNICORN_THREADS={{ env_config.threads }}
+      - GUNICORN_TIMEOUT={{ env_config.timeout }}
+    command: >
+      sh -c "
+      python manage.py migrate --noinput &&
+      python manage.py collectstatic --noinput &&
+      gunicorn backend.wsgi:application
+        --bind 0.0.0.0:8000
+        --workers {{ env_config.workers }}
+        --threads {{ env_config.threads }}
+        --timeout {{ env_config.timeout }}
+        --access-logfile -
+        --error-logfile -
+        --log-level info
+      "
+{% if env_services.redis[env_name].enabled %}
+    depends_on:
+      - redis
+{% endif %}
+
+{% if env_services.celery_worker[env_name].enabled %}
+  celery_worker:
+    image: {{ env_config.docker_image }}
+    hostname: celery_worker
+    networks:
+      - internal
+    deploy:
+      replicas: {{ env_services.celery_worker[env_name].replicas }}
+      placement:
+        constraints:
+          - node.labels.role_celery == true
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - {{ data_root }}/media:/app/media
+    env_file:
+      - {{ stack_root }}/.env
+    environment:
+      - APP_ROLE=celery_worker
+    command: >
+      sh -c "
+      celery -A backend worker
+        --loglevel=info
+        --concurrency={{ env_services.celery_worker[env_name].concurrency }}
+        --max-tasks-per-child=1000
+        -Q default
+      "
+{% if env_services.redis[env_name].enabled %}
+    depends_on:
+      - redis
+      - app
+{% else %}
+    depends_on:
+      - app
+{% endif %}
+
+{% endif %}
+{% if env_services.celery_orchestrator[env_name].enabled and env_services.celery_orchestrator[env_name].replicas > 0 %}
+  celery_orchestrator:
+    image: {{ env_config.docker_image }}
+    hostname: celery_orchestrator
+    networks:
+      - internal
+    deploy:
+      replicas: {{ env_services.celery_orchestrator[env_name].replicas }}
+      placement:
+        constraints:
+          - node.labels.role_celery == true
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.2'
+          memory: 512M
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - {{ data_root }}/media:/app/media
+    env_file:
+      - {{ stack_root }}/.env
+    environment:
+      - APP_ROLE=celery_orchestrator
+    command: >
+      sh -c "
+      celery -A backend worker
+        --loglevel=info
+        --concurrency={{ env_services.celery_orchestrator[env_name].concurrency }}
+        --max-tasks-per-child=1000
+        -Q orchestrator
+        -P solo
+      "
+{% if env_services.redis[env_name].enabled %}
+    depends_on:
+      - redis
+      - app
+{% else %}
+    depends_on:
+      - app
+{% endif %}
+
+{% endif %}
+{% if env_services.celery_beat[env_name].enabled %}
+  celery_beat:
+    image: {{ env_config.docker_image }}
+    hostname: celery_beat
+    networks:
+      - internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role_celery == true
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+    env_file:
+      - {{ stack_root }}/.env
+    environment:
+      - APP_ROLE=celery_beat
+    command: celery -A backend beat --loglevel=info
+{% if env_services.redis[env_name].enabled %}
+    depends_on:
+      - redis
+      - app
+{% else %}
+    depends_on:
+      - app
+{% endif %}
+
+{% endif %}
+{% if env_services.flower[env_name].enabled %}
+  flower:
+    image: mher/flower:latest
+    hostname: flower
+    networks:
+      - internal
+    ports:
+      - target: 5555
+        published: 5555
+        mode: host
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role_celery == true
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - FLOWER_BASIC_AUTH={{ flower_username }}:{{ flower_password }}
+      - FLOWER_PORT=5555
+    command: celery --broker=redis://redis:6379/0 flower --port=5555 --basic-auth={{ flower_username }}:{{ flower_password }}
+    depends_on:
+      - redis
+
+{% endif %}
+networks:
+  internal:
+    driver: overlay
+    attachable: true
+
+volumes:
+{% if env_services.redis[env_name].enabled %}
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: {{ data_root }}/redis
+      o: bind
+{% endif %}

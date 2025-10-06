@@ -1,0 +1,66 @@
+---
+# ============================================
+# Package Management Tasks
+# ============================================
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  become: yes
+
+- name: Upgrade all packages
+  apt:
+    upgrade: dist
+    autoremove: yes
+    autoclean: yes
+  become: yes
+  register: upgrade_result
+
+- name: Install essential packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - software-properties-common
+      - build-essential
+      - git
+      - wget
+      - unzip
+      - vim
+      - htop
+      - net-tools
+      - dnsutils
+      - ufw
+      - fail2ban
+      - rsync
+      - python3
+      - python3-pip
+      - python3-venv
+      - python3-dev
+      - libpq-dev
+      - acl
+    state: present
+  become: yes
+
+- name: Install Python packages for Ansible
+  pip:
+    name:
+      - docker
+      - jsondiff
+      - pyyaml
+    executable: pip3
+    state: present
+  become: yes
+
+- name: Check if reboot is required
+  stat:
+    path: /var/run/reboot-required
+  register: reboot_required_file
+
+- name: Set reboot required fact
+  set_fact:
+    reboot_required: "{{ reboot_required_file.stat.exists }}"

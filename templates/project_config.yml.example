@@ -1,0 +1,139 @@
+# ============================================
+# Django-Nginx-uWSGI Ansible - Project Config
+# ============================================
+
+# Server Configuration
+server:
+  hostname: "django-server"  # Hostname for the server
+  ip_address: "YOUR_SERVER_IP"  # Public IP address
+  ssh_port: 22
+  timezone: "Europe/Paris"
+
+# Domain Configuration
+domains:
+  staging:
+    enabled: true
+    domain: "staging.example.com"
+    ssl: true  # Enable Let's Encrypt SSL
+  production:
+    enabled: true
+    domain: "app.example.com"
+    additional_domains:  # Optional: additional domains for production
+      - "example.com"
+      - "www.example.com"
+    ssl: true
+
+# Services Configuration
+services:
+  # PostgreSQL (always installed on host, not Docker)
+  postgresql:
+    version: "15"
+    staging_db: "db_staging"
+    staging_user: "django_staging"
+    production_db: "db_prod"
+    production_user: "django_prod"
+
+  # Docker Swarm Configuration
+  docker:
+    data_root: "/data/docker"  # Where to store Docker data
+
+  # Redis (per environment)
+  redis:
+    staging:
+      enabled: true
+      memory_limit: "512mb"
+    production:
+      enabled: true
+      memory_limit: "2gb"
+
+  # Celery Workers (default queue)
+  celery_worker:
+    staging:
+      enabled: true
+      replicas: 1
+      concurrency: 2
+    production:
+      enabled: true
+      replicas: 2
+      concurrency: 4
+
+  # Celery Orchestrator Worker (separate queue for orchestration tasks)
+  celery_orchestrator:
+    staging:
+      enabled: false
+      replicas: 0
+      concurrency: 1
+    production:
+      enabled: false  # Set to true if you need orchestrator pattern
+      replicas: 1
+      concurrency: 1
+
+  # Celery Beat (scheduled tasks)
+  celery_beat:
+    staging:
+      enabled: false
+    production:
+      enabled: true
+
+  # Flower (Celery monitoring)
+  flower:
+    staging:
+      enabled: false
+    production:
+      enabled: true
+
+# Django App Configuration
+django:
+  staging:
+    docker_image: "your-registry/your-app:staging"
+    replicas: 1
+    port: 8001
+    workers: 2  # Gunicorn workers
+    threads: 2  # Gunicorn threads per worker
+    timeout: 120
+  production:
+    docker_image: "your-registry/your-app:latest"
+    replicas: 2
+    port: 8000
+    workers: 4
+    threads: 2
+    timeout: 300
+
+# Nginx Configuration
+nginx:
+  client_max_body_size: "100M"
+  worker_processes: "auto"
+  worker_connections: 1024
+
+# SSL/TLS Configuration
+ssl:
+  enabled: true
+  email: "admin@example.com"  # Email for Let's Encrypt notifications
+  staging_cert: false  # Use Let's Encrypt staging for testing (doesn't count against rate limits)
+
+# Security
+security:
+  fail2ban:
+    enabled: true
+    ssh_maxretry: 3
+    ssh_bantime: 3600
+    nginx_maxretry: 5
+    nginx_bantime: 600
+
+  firewall:
+    enabled: true
+    allowed_ports:
+      - 22    # SSH
+      - 80    # HTTP
+      - 443   # HTTPS
+    allowed_ips: []  # Optional: restrict SSH to specific IPs
+
+# Monitoring & Logging
+monitoring:
+  log_retention_days: 30
+
+# Backup (optional - for future implementation)
+backup:
+  enabled: false
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention_days: 7

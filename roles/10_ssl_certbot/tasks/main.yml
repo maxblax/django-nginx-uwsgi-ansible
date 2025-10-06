@@ -1,0 +1,215 @@
+---
+# ============================================
+# SSL/TLS Certificate Setup with Certbot
+# ============================================
+# This role configures Let's Encrypt SSL certificates
+# and sets up automatic renewal
+
+- name: Check if SSL is enabled
+  set_fact:
+    ssl_enabled: "{{ project_config.ssl.enabled }}"
+
+- name: Display SSL configuration
+  debug:
+    msg: |
+      SSL Configuration:
+      - Enabled: {{ ssl_enabled }}
+      - Email: {{ project_config.ssl.email }}
+      - Staging: {{ project_config.ssl.staging_cert }}
+
+- name: Ensure certbot is installed
+  apt:
+    name:
+      - certbot
+      - python3-certbot-nginx
+    state: present
+  become: yes
+  when: ssl_enabled
+
+- name: Check if staging SSL certificate already exists
+  stat:
+    path: "/etc/letsencrypt/live/{{ project_config.domains.staging.domain }}/fullchain.pem"
+  register: staging_cert
+  when:
+    - ssl_enabled
+    - project_config.domains.staging.enabled
+    - project_config.domains.staging.ssl
+
+- name: Check if production SSL certificate already exists
+  stat:
+    path: "/etc/letsencrypt/live/{{ project_config.domains.production.domain }}/fullchain.pem"
+  register: production_cert
+  when:
+    - ssl_enabled
+    - project_config.domains.production.enabled
+    - project_config.domains.production.ssl
+
+- name: Obtain SSL certificate for staging
+  command: >
+    certbot --nginx
+    -d {{ project_config.domains.staging.domain }}
+    --non-interactive
+    --agree-tos
+    --email {{ project_config.ssl.email }}
+    {{ '--staging' if project_config.ssl.staging_cert else '' }}
+    --redirect
+  become: yes
+  when:
+    - ssl_enabled
+    - project_config.domains.staging.enabled
+    - project_config.domains.staging.ssl
+    - not staging_cert.stat.exists
+  register: staging_cert_result
+
+- name: Build production domains list
+  set_fact:
+    production_domains: >-
+      {{ [project_config.domains.production.domain] +
+         (project_config.domains.production.additional_domains | default([])) }}
+  when:
+    - ssl_enabled
+    - project_config.domains.production.enabled
+    - project_config.domains.production.ssl
+
+- name: Obtain SSL certificate for production
+  command: >
+    certbot --nginx
+    {% for domain in production_domains %}-d {{ domain }} {% endfor %}
+    --non-interactive
+    --agree-tos
+    --email {{ project_config.ssl.email }}
+    {{ '--staging' if project_config.ssl.staging_cert else '' }}
+    --redirect
+  become: yes
+  when:
+    - ssl_enabled
+    - project_config.domains.production.enabled
+    - project_config.domains.production.ssl
+    - not production_cert.stat.exists
+    - production_domains is defined
+  register: production_cert_result
+
+- name: Test certificate renewal (dry run)
+  command: certbot renew --dry-run
+  become: yes
+  when: ssl_enabled
+  register: renewal_test
+  changed_when: false
+  failed_when: false
+
+- name: Display renewal test result
+  debug:
+    msg: |
+      Certificate renewal test: {{ 'SUCCESS' if renewal_test.rc == 0 else 'FAILED' }}
+      {% if renewal_test.rc != 0 %}
+      Error: {{ renewal_test.stderr }}
+      {% endif %}
+  when: ssl_enabled
+
+- name: Setup automatic certificate renewal with systemd timer
+  block:
+    - name: Create certbot renewal systemd service
+      copy:
+        dest: /etc/systemd/system/certbot-renewal.service
+        content: |
+          [Unit]
+          Description=Let's Encrypt certificate renewal
+          After=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/certbot renew --quiet --post-hook "systemctl reload nginx"
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Create certbot renewal systemd timer
+      copy:
+        dest: /etc/systemd/system/certbot-renewal.timer
+        content: |
+          [Unit]
+          Description=Let's Encrypt certificate renewal timer
+
+          [Timer]
+          # Run twice daily at 00:00 and 12:00
+          OnCalendar=*-*-* 00,12:00:00
+          # Run on boot if we missed the scheduled time
+          Persistent=true
+          # Add random delay to avoid load spikes
+          RandomizedDelaySec=3600
+
+          [Install]
+          WantedBy=timers.target
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Enable and start certbot renewal timer
+      systemd:
+        name: certbot-renewal.timer
+        enabled: yes
+        state: started
+        daemon_reload: yes
+      become: yes
+
+    - name: Check systemd timer status
+      command: systemctl status certbot-renewal.timer
+      become: yes
+      register: timer_status
+      changed_when: false
+      failed_when: false
+
+    - name: Display timer status
+      debug:
+        var: timer_status.stdout_lines
+  when: ssl_enabled
+
+- name: Setup logrotate for certbot logs
+  copy:
+    dest: /etc/logrotate.d/certbot
+    content: |
+      /var/log/letsencrypt/*.log {
+          rotate 12
+          monthly
+          compress
+          missingok
+          notifempty
+      }
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  when: ssl_enabled
+
+- name: Display SSL setup summary
+  debug:
+    msg: |
+      ========================================
+      SSL/TLS Setup Complete
+      ========================================
+      {% if project_config.domains.staging.enabled and project_config.domains.staging.ssl %}
+      Staging: https://{{ project_config.domains.staging.domain }}
+      {% endif %}
+      {% if project_config.domains.production.enabled and project_config.domains.production.ssl %}
+      Production: https://{{ project_config.domains.production.domain }}
+      {% for domain in project_config.domains.production.additional_domains | default([]) %}
+      Additional: https://{{ domain }}
+      {% endfor %}
+      {% endif %}
+
+      Certificate auto-renewal:
+      - Systemd timer: certbot-renewal.timer
+      - Runs twice daily (00:00 and 12:00)
+      - Certificates renew automatically 30 days before expiry
+      - Nginx reloads automatically after renewal
+
+      Manual operations:
+      - Test renewal: sudo certbot renew --dry-run
+      - Force renewal: sudo certbot renew --force-renewal
+      - Check status: sudo systemctl status certbot-renewal.timer
+      - View logs: sudo journalctl -u certbot-renewal.service
+
+      ========================================
+  when: ssl_enabled

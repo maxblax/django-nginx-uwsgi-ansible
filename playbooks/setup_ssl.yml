@@ -1,0 +1,139 @@
+---
+# ============================================
+# SSL/TLS Certificate Setup Playbook
+# ============================================
+# This playbook sets up SSL certificates with Let's Encrypt
+# Run this AFTER deploying your applications to ensure domains are accessible
+
+- name: Setup SSL Certificates
+  hosts: django_server
+  become: yes
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Load project configuration
+      include_vars:
+        file: "{{ playbook_dir }}/../project_config.yml"
+        name: project_config
+
+    - name: Check if SSL is enabled
+      fail:
+        msg: "SSL is not enabled in project_config.yml. Set ssl.enabled to true to continue."
+      when: not project_config.ssl.enabled
+
+    - name: Verify domains are accessible
+      uri:
+        url: "http://{{ item }}"
+        method: GET
+        status_code: [200, 301, 302, 404]  # Accept any response, just need connectivity
+        timeout: 10
+      register: domain_check
+      failed_when: false
+      loop:
+        - "{{ project_config.domains.staging.domain if project_config.domains.staging.enabled else '' }}"
+        - "{{ project_config.domains.production.domain if project_config.domains.production.enabled else '' }}"
+      when: item != ''
+
+    - name: Display SSL setup information
+      debug:
+        msg: |
+          ========================================
+          SSL Certificate Setup
+          ========================================
+          Email: {{ project_config.ssl.email }}
+          Staging Certificates: {{ project_config.ssl.staging_cert }}
+
+          Domains to configure:
+          {% if project_config.domains.staging.enabled and project_config.domains.staging.ssl %}
+          - Staging: {{ project_config.domains.staging.domain }}
+          {% endif %}
+          {% if project_config.domains.production.enabled and project_config.domains.production.ssl %}
+          - Production: {{ project_config.domains.production.domain }}
+          {% for domain in project_config.domains.production.additional_domains | default([]) %}
+          - Additional: {{ domain }}
+          {% endfor %}
+          {% endif %}
+          ========================================
+
+    - name: Confirm SSL setup
+      pause:
+        prompt: |
+          ⚠️  IMPORTANT: Before continuing, ensure:
+          1. Your domains are pointing to this server's IP ({{ project_config.server.ip_address }})
+          2. Your applications are deployed and accessible via HTTP
+          3. Ports 80 and 443 are open in your firewall
+
+          Press ENTER to continue or Ctrl+C to cancel
+      when: not (ansible_check_mode | default(false))
+
+  roles:
+    - role: 10_ssl_certbot
+      tags: ['ssl', 'certbot', 'letsencrypt']
+
+  post_tasks:
+    - name: Test HTTPS access for staging
+      uri:
+        url: "https://{{ project_config.domains.staging.domain }}"
+        method: GET
+        validate_certs: yes
+        timeout: 10
+      register: staging_https
+      failed_when: false
+      when:
+        - project_config.domains.staging.enabled
+        - project_config.domains.staging.ssl
+
+    - name: Test HTTPS access for production
+      uri:
+        url: "https://{{ project_config.domains.production.domain }}"
+        method: GET
+        validate_certs: yes
+        timeout: 10
+      register: production_https
+      failed_when: false
+      when:
+        - project_config.domains.production.enabled
+        - project_config.domains.production.ssl
+
+    - name: Display HTTPS test results
+      debug:
+        msg: |
+          ========================================
+          HTTPS Access Test Results
+          ========================================
+          {% if staging_https is defined and staging_https.status is defined %}
+          Staging ({{ project_config.domains.staging.domain }}): {{ 'OK' if staging_https.status == 200 else 'FAILED' }}
+          {% endif %}
+          {% if production_https is defined and production_https.status is defined %}
+          Production ({{ project_config.domains.production.domain }}): {{ 'OK' if production_https.status == 200 else 'FAILED' }}
+          {% endif %}
+          ========================================
+
+    - name: Display completion message
+      debug:
+        msg: |
+          ========================================
+          SSL Setup Complete! 🔒
+          ========================================
+
+          Your sites are now accessible via HTTPS:
+          {% if project_config.domains.staging.enabled and project_config.domains.staging.ssl %}
+          - https://{{ project_config.domains.staging.domain }}
+          {% endif %}
+          {% if project_config.domains.production.enabled and project_config.domains.production.ssl %}
+          - https://{{ project_config.domains.production.domain }}
+          {% for domain in project_config.domains.production.additional_domains | default([]) %}
+          - https://{{ domain }}
+          {% endfor %}
+          {% endif %}
+
+          Automatic renewal is configured:
+          - Checks run twice daily (00:00 and 12:00)
+          - Certificates auto-renew 30 days before expiry
+          - Nginx auto-reloads after renewal
+
+          Useful commands:
+          - Test renewal: sudo certbot renew --dry-run
+          - Check timer: sudo systemctl status certbot-renewal.timer
+          - View logs: sudo journalctl -u certbot-renewal.service
+          ========================================
