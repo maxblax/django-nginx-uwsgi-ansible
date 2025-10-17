@@ -100,7 +100,9 @@ django:
     timeout: 300
 
 # Nginx Configuration
+# Note: Nginx is now containerized in Docker Swarm for zero-downtime deployments
 nginx:
+  dockerized: true  # Nginx runs as a Docker service (recommended for production)
   client_max_body_size: "100M"
   worker_processes: "auto"
   worker_connections: 1024
@@ -127,6 +129,13 @@ security:
       - 80    # HTTP
       - 443   # HTTPS
     allowed_ips: []  # Optional: restrict SSH to specific IPs
+
+  # IP Access Control (optional - restrict access to specific IPs)
+  ip_access_control:
+    enabled: false  # Set to true to enable IP whitelisting
+    allowed_ips:
+      - "1.2.3.4"  # Example: Replace with your IP addresses
+      # - "5.6.7.8"
 
 # Monitoring & Logging
 monitoring:

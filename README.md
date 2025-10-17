@@ -7,20 +7,21 @@ Deploy Django applications with Nginx, PostgreSQL, Redis, and Celery on a single
 ## ✨ Features
 
 - 🚀 **One-command setup** - Interactive script configures everything
-- 🔒 **Security hardened** - UFW firewall, Fail2ban, SSH key auth
-- 🐘 **PostgreSQL on bare metal** - Separate databases for staging/prod  
+- 🔒 **Security hardened** - UFW firewall, Fail2ban, SSH key auth, optional IP whitelisting
+- 🐘 **PostgreSQL on bare metal** - Separate databases for staging/prod
 - 🐳 **Docker Swarm** - Single-node Swarm for rolling updates
-- 🔄 **Zero-downtime deployments** - Blue-green style updates
-- 🔐 **Automatic SSL** - Let's Encrypt with auto-renewal
+- 🔄 **Zero-downtime deployments** - Dockerized Nginx + intelligent digest checking
+- 🔐 **Automatic SSL** - Let's Encrypt with auto-renewal and conditional HTTPS
 - 📊 **Optional monitoring** - Flower for Celery
 - ⚙️ **Highly modular** - Enable/disable any service per environment
 - 🎯 **Simple & focused** - Perfect for small to medium Django projects
+- 🔧 **Smart deployments** - Only updates services when Docker image digest changes
 
 ## 🏗️ Architecture
 
 ### Infrastructure
 - **1 bare-metal server** (Debian/Ubuntu)
-- **Nginx** on host as reverse proxy
+- **Nginx** dockerized in Swarm for zero-downtime updates
 - **PostgreSQL** on host with 2 databases
 - **Docker Swarm** single-node mode
 
@@ -173,6 +174,20 @@ ssl:
   email: "admin@example.com"
   staging_cert: false  # Use Let's Encrypt staging (for testing)
 ```
+
+### Security Features
+
+```yaml
+security:
+  # IP Access Control - Optional whitelist for production
+  ip_access_control:
+    enabled: false  # Set to true to restrict access
+    allowed_ips:
+      - "1.2.3.4"   # Your office IP
+      - "5.6.7.8"   # Your VPN IP
+```
+
+When enabled, the application only accepts HTTPS traffic from whitelisted IPs. Perfect for internal tools or beta deployments.
 
 ### Complete Config Structure
 

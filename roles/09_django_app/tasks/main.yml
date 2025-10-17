@@ -13,6 +13,7 @@
     stack_name: "{{ environment }}_django"
     stack_root: "/opt/{{ environment }}_django"
     data_root: "/data/{{ environment }}"
+    deploy_env: "{{ environment }}"
 
 - name: Display deployment information
   debug:
@@ -56,12 +57,40 @@
   become: yes
   become_user: docker
 
-- name: Pull Docker images
-  docker_image:
-    name: "{{ env_config.docker_image }}"
-    source: pull
+- name: Template Nginx configuration
+  template:
+    src: nginx.conf.j2
+    dest: "{{ stack_root }}/nginx.conf"
+    owner: root
+    group: docker
+    mode: '0644'
   become: yes
-  ignore_errors: yes
+
+- name: Get current image digest (if exists)
+  shell: docker image inspect {{ env_config.docker_image }} --format='{{ '{{' }}index .RepoDigests 0{{ '}}' }}' 2>/dev/null || echo "none"
+  register: current_digest
+  changed_when: false
+  become: yes
+
+- name: Force pull latest image
+  shell: docker pull {{ env_config.docker_image }}
+  register: pull_result
+  changed_when: "'Downloaded newer image' in pull_result.stdout or 'Pulling from' in pull_result.stdout"
+  become: yes
+
+- name: Get new image digest
+  shell: docker image inspect {{ env_config.docker_image }} --format='{{ '{{' }}index .RepoDigests 0{{ '}}' }}'
+  register: new_digest
+  changed_when: false
+  become: yes
+
+- name: Display image update status
+  debug:
+    msg: |
+      Image update status:
+      - Old digest: {{ current_digest.stdout }}
+      - New digest: {{ new_digest.stdout }}
+      - Image changed: {{ current_digest.stdout != new_digest.stdout }}
 
 - name: Deploy stack using Docker Compose
   community.docker.docker_stack:
@@ -70,11 +99,33 @@
     compose:
       - "{{ stack_root }}/docker-compose.yml"
   become: yes
-  become_user: docker
+
+- name: Force update service if image digest changed
+  shell: docker service update --force --image {{ env_config.docker_image }} {{ stack_name }}_app
+  become: yes
+  when: current_digest.stdout != new_digest.stdout
+  ignore_errors: true
 
 - name: Wait for stack to be deployed
   pause:
     seconds: 10
+
+- name: Wait for collectstatic to complete
+  wait_for:
+    path: "{{ data_root }}/static/admin"
+    state: present
+    timeout: 60
+  become: yes
+  ignore_errors: yes
+
+- name: Fix static files permissions
+  file:
+    path: "{{ data_root }}/static"
+    owner: root
+    group: docker
+    mode: '0755'
+    recurse: yes
+  become: yes
 
 - name: Get list of services in the stack
   command: docker stack services {{ stack_name }} --format '{{"{{"}}.Name{{"}}"}}'
