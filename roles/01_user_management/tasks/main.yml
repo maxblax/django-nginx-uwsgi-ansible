@@ -2,7 +2,37 @@
 # ============================================
 # User Management Tasks
 # ============================================
-# This role sets up the ansible user with proper permissions
+# This role sets up users, passwords, and SSH security
+
+# Check if passwords have already been changed
+- name: Check if passwords already changed
+  stat:
+    path: /root/.ansible_passwords_changed
+  register: passwords_changed
+  become: yes
+
+# ============================================
+# Change existing user passwords (idempotent)
+# ============================================
+
+- name: Change root password
+  user:
+    name: root
+    password: "{{ root_password | password_hash('sha512') }}"
+  become: yes
+  when: not passwords_changed.stat.exists and root_password is defined
+
+- name: Mark passwords as changed
+  file:
+    path: /root/.ansible_passwords_changed
+    state: touch
+    mode: '0600'
+  become: yes
+  when: not passwords_changed.stat.exists
+
+# ============================================
+# Create ansible user
+# ============================================
 
 - name: Ensure sudo is installed
   apt:
@@ -10,12 +40,11 @@
     state: present
     update_cache: yes
   become: yes
-  become_method: su
-  ignore_errors: yes
 
 - name: Create ansible user
   user:
     name: "{{ ansible_user_name }}"
+    password: "{{ ansible_password | password_hash('sha512') }}"
     shell: "{{ ansible_user_shell }}"
     create_home: yes
     state: present
@@ -47,37 +76,50 @@
   become: yes
   when: ansible_user_ssh_key_path is defined
 
-- name: Create docker user for running containers
-  user:
-    name: docker
-    shell: /bin/bash
-    create_home: yes
-    groups: docker
-    append: yes
+# ============================================
+# Docker group management
+# ============================================
+# Note: Adding ansible user to docker group is handled in 07_docker_swarm role
+# after Docker is installed and the group exists
+
+# ============================================
+# SSH Security Configuration
+# ============================================
+
+- name: Change SSH port to custom port
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?Port'
+    line: 'Port {{ project_config.server.ssh_port | default(22) }}'
     state: present
   become: yes
-
-- name: Ensure ansible user is in docker group
-  user:
-    name: "{{ ansible_user_name }}"
-    groups: "{{ ansible_user_groups }}"
-    append: yes
-  become: yes
+  notify: restart ssh
 
 - name: Disable root SSH login
   lineinfile:
     path: /etc/ssh/sshd_config
-    regexp: '^PermitRootLogin'
+    regexp: '^#?PermitRootLogin'
     line: 'PermitRootLogin no'
     state: present
   become: yes
   notify: restart ssh
 
-- name: Disable password authentication
+- name: Disable password authentication for ansible user only
+  blockinfile:
+    path: /etc/ssh/sshd_config
+    marker: "# {mark} ANSIBLE MANAGED - Disable password for ansible user"
+    block: |
+      Match User ansible
+          PasswordAuthentication no
+    insertafter: EOF
+  become: yes
+  notify: restart ssh
+
+- name: Keep password authentication enabled globally
   lineinfile:
     path: /etc/ssh/sshd_config
-    regexp: '^PasswordAuthentication'
-    line: 'PasswordAuthentication no'
+    regexp: '^#?PasswordAuthentication'
+    line: 'PasswordAuthentication yes'
     state: present
   become: yes
   notify: restart ssh

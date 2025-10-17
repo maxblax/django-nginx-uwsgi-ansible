@@ -22,11 +22,25 @@
     enabled: yes
   become: yes
 
-- name: Configure PostgreSQL to listen on localhost only
+- name: Detect installed PostgreSQL version
+  shell: ls -1 /etc/postgresql/ | head -1
+  register: pg_version_detected
+  changed_when: false
+  become: yes
+
+- name: Set PostgreSQL version fact
+  set_fact:
+    pg_version: "{{ pg_version_detected.stdout }}"
+
+- name: Display detected PostgreSQL version
+  debug:
+    msg: "Detected PostgreSQL version: {{ pg_version }}"
+
+- name: Configure PostgreSQL to listen on localhost and Docker bridge
   lineinfile:
-    path: "/etc/postgresql/{{ project_config.services.postgresql.version }}/main/postgresql.conf"
+    path: "/etc/postgresql/{{ pg_version }}/main/postgresql.conf"
     regexp: '^#?listen_addresses'
-    line: "listen_addresses = 'localhost'"
+    line: "listen_addresses = 'localhost,172.19.0.1'"
     state: present
   become: yes
   notify: restart postgresql
@@ -34,7 +48,7 @@
 - name: Configure PostgreSQL authentication (md5 for local connections)
   template:
     src: pg_hba.conf.j2
-    dest: "/etc/postgresql/{{ project_config.services.postgresql.version }}/main/pg_hba.conf"
+    dest: "/etc/postgresql/{{ pg_version }}/main/pg_hba.conf"
     owner: postgres
     group: postgres
     mode: '0640'

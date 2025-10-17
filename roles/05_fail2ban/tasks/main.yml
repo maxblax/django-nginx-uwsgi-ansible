@@ -2,6 +2,7 @@
 # ============================================
 # Fail2ban Configuration Tasks
 # ============================================
+# Comprehensive protection against brute force and exploitation attempts
 
 - name: Ensure fail2ban is installed
   apt:
@@ -10,40 +11,266 @@
   become: yes
   when: project_config.security.fail2ban.enabled
 
-- name: Create fail2ban local jail configuration
-  template:
-    src: jail.local.j2
+# ============================================
+# Whitelist admin IPs
+# ============================================
+
+- name: Configure fail2ban jail.local with IP whitelist
+  copy:
     dest: /etc/fail2ban/jail.local
+    content: |
+      [DEFAULT]
+      ignoreip = 127.0.0.1/8 ::1 {{ project_config.security.fail2ban.admin_ip_whitelist | default([]) | join(' ') }}
+      bantime = 3600
+      findtime = 600
+      maxretry = 5
     owner: root
     group: root
     mode: '0644'
   become: yes
-  notify: restart fail2ban
   when: project_config.security.fail2ban.enabled
 
-- name: Create nginx fail2ban filter
-  template:
-    src: nginx-limit-req.conf.j2
-    dest: /etc/fail2ban/filter.d/nginx-limit-req.conf
+# ============================================
+# Filter 1: HTTP 4XX/5XX errors (temporary ban)
+# ============================================
+
+- name: Deploy custom fail2ban filter for 4XX and 5XX errors
+  copy:
+    dest: /etc/fail2ban/filter.d/nginx-http-errors.conf
+    content: |
+      [Definition]
+      failregex = ^<HOST> -.*"(GET|POST|HEAD).*" (4|5)\d\d \d+ ".*"$
+      ignoreregex =
     owner: root
     group: root
     mode: '0644'
   become: yes
-  notify: restart fail2ban
   when: project_config.security.fail2ban.enabled
+
+- name: Configure jail for handling HTTP errors
+  copy:
+    dest: /etc/fail2ban/jail.d/nginx-http-errors.local
+    content: |
+      [nginx-http-errors]
+      enabled = true
+      port    = http,https
+      filter  = nginx-http-errors
+      logpath = /var/log/nginx/access.log
+      maxretry = 5
+      findtime = 120
+      bantime = 3600
+      action = iptables[name=HTTP, port=http, protocol=tcp]
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  when: project_config.security.fail2ban.enabled
+
+# ============================================
+# Filter 2: Application exploitation attempts (PERMANENT BAN)
+# ============================================
+
+- name: Deploy custom fail2ban filter for exploitation attempts
+  copy:
+    dest: /etc/fail2ban/filter.d/nginx-app-attempts.conf
+    content: |
+      [Definition]
+      # WordPress exploitation attempts
+      failregex = ^<HOST> -.*"(GET|POST|HEAD).* /wp-admin/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /wp-includes/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /wp-login.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /wp-content/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /xmlrpc.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /wlwmanifest\.xml
+                  ^<HOST> -.*"(GET|POST|HEAD).* //wp-includes/
+                  ^<HOST> -.*"(GET|POST|HEAD).* //xmlrpc\.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /robots\.txt
+                  ^<HOST> -.*"(GET|POST|HEAD).* //blog/
+                  ^<HOST> -.*"(GET|POST|HEAD).* //web/
+                  ^<HOST> -.*"(GET|POST|HEAD).* //wordpress/
+
+      # PHP exploitation attempts
+                  ^<HOST> -.*"(GET|POST|HEAD).* /phpmyadmin/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /php/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /index.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* \.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /config.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /setup.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /install.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /admin.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /phpMyAdmin/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /phpPgAdmin/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /dbadmin/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /pma/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /myadmin/
+
+      # PHPUnit RCE vulnerability
+                  ^<HOST> -.*"(GET|POST|HEAD).* /vendor/phpunit/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /vendor/phpunit/phpunit/src/Util/PHP/eval-stdin\.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /api/vendor/phpunit/
+
+      # Environment and config files
+                  ^<HOST> -.*"(GET|POST|HEAD).* \.env
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.env
+                  ^<HOST> -.*"(GET|POST|HEAD).* /api/\.env
+                  ^<HOST> -.*"(GET|POST|HEAD).* /config/
+
+      # Git repository exposure
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.git/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.git/config
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.git/HEAD
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.gitignore
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.svn/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.hg/
+
+      # Common admin panels
+                  ^<HOST> -.*"(GET|POST|HEAD).* /admin/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /admin  # Note: no trailing slash
+                  ^<HOST> -.*"(GET|POST|HEAD).* /manager/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /web-admin/
+
+      # Sensitive directories
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.htaccess
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.htpasswd
+                  ^<HOST> -.*"(GET|POST|HEAD).* /\.ssh/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /backup/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /backups/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /dump/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /logs/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /log/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /tmp/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /temp/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /debug/
+
+      # Java application exploits
+                  ^<HOST> -.*"(GET|POST|HEAD).* \.jsp
+                  ^<HOST> -.*"(GET|POST|HEAD).* /admin.jsp
+                  ^<HOST> -.*"(GET|POST|HEAD).* /jmx-console/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /admin-console/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /manager/html
+
+      # Spring Boot Actuator endpoints
+                  ^<HOST> -.*"(GET|POST|HEAD).* /actuator/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /actuator/gateway/routes
+                  ^<HOST> -.*"(GET|POST|HEAD).* /actuator/env
+                  ^<HOST> -.*"(GET|POST|HEAD).* /api/actuator/
+
+      # Binary payloads and malformed requests
+                  ^<HOST> -.*"Gh0st.*
+                  ^<HOST> -.*".*\\x.*
+                  ^<HOST> -.*"\\x16\\x03.*
+                  ^<HOST> -.*"SSH-.*
+
+      # Script directories
+                  ^<HOST> -.*"(GET|POST|HEAD).* /scripts/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /cgi-bin/
+
+      # ASP.NET attempts
+                  ^<HOST> -.*"(GET|POST|HEAD).* \.aspx
+
+      # Docker API exposure
+                  ^<HOST> -.*"(GET|POST|HEAD).* /containers/json
+
+      # ThinkPHP RCE
+                  ^<HOST> -.*"(GET|POST|HEAD).* /index\.php\?s=/index/.*think.*
+                  ^<HOST> -.*"(GET|POST|HEAD).* /public/index\.php\?s=/index/.*think.*
+
+      # Common malicious files
+                  ^<HOST> -.*"(GET|POST|HEAD).* /upl\.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /password\.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /1\.php
+                  ^<HOST> -.*"(GET|POST|HEAD).* /form\.html
+
+      ignoreregex =
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  when: project_config.security.fail2ban.enabled
+
+- name: Configure application-specific jail for fail2ban (PERMANENT BAN)
+  copy:
+    dest: /etc/fail2ban/jail.d/nginx-app-attempts.local
+    content: |
+      [nginx-app-attempts]
+      enabled = true
+      port    = http,https
+      filter  = nginx-app-attempts
+      logpath = /var/log/nginx/access.log
+      maxretry = 1
+      findtime = 600
+      bantime = -1  # Permanent ban
+      action = iptables[name=App, port=http, protocol=tcp]
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  when: project_config.security.fail2ban.enabled
+
+# ============================================
+# Filter 3: Django admin access attempts (PERMANENT BAN)
+# ============================================
+
+- name: Deploy custom fail2ban filter for Django admin URL attempts
+  copy:
+    dest: /etc/fail2ban/filter.d/nginx-django-admin.conf
+    content: |
+      [Definition]
+      failregex = ^<HOST> -.*"(GET|POST|HEAD).* /admin/login/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /admin/
+                  ^<HOST> -.*"(GET|POST|HEAD).* /admin$
+      ignoreregex =
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  when: project_config.security.fail2ban.enabled
+
+- name: Configure Django admin jail for fail2ban (PERMANENT BAN)
+  copy:
+    dest: /etc/fail2ban/jail.d/nginx-django-admin.local
+    content: |
+      [nginx-django-admin]
+      enabled = true
+      port    = http,https
+      filter  = nginx-django-admin
+      logpath = /var/log/nginx/access.log
+      maxretry = 1
+      findtime = 600
+      bantime = -1  # Permanent ban
+      action = iptables[name=DjangoAdmin, port=http, protocol=tcp]
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  when: project_config.security.fail2ban.enabled
+
+# ============================================
+# Enable and restart fail2ban
+# ============================================
 
 - name: Ensure fail2ban is started and enabled
   service:
     name: fail2ban
-    state: started
+    state: restarted
     enabled: yes
   become: yes
+  when: project_config.security.fail2ban.enabled
+
+# ============================================
+# Display status
+# ============================================
+
+- name: Wait for fail2ban to start
+  pause:
+    seconds: 3
   when: project_config.security.fail2ban.enabled
 
 - name: Display fail2ban status
   command: fail2ban-client status
   register: fail2ban_status
   changed_when: false
+  failed_when: false
   become: yes
   when: project_config.security.fail2ban.enabled
 
@@ -53,3 +280,12 @@
   when:
     - project_config.security.fail2ban.enabled
     - fail2ban_status is defined
+    - fail2ban_status.rc == 0
+
+- name: Show fail2ban error (if any)
+  debug:
+    msg: "Fail2ban not fully started yet (likely waiting for Nginx logs). Will be active after Nginx installation."
+  when:
+    - project_config.security.fail2ban.enabled
+    - fail2ban_status is defined
+    - fail2ban_status.rc != 0

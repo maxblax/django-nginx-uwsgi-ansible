@@ -1,75 +1,182 @@
 ---
 # ============================================
-# Firewall Configuration Tasks (UFW)
+# Firewall Configuration Tasks (iptables)
+# ============================================
+# Uses iptables directly to avoid lockout risks
+
+- name: Install iptables-persistent
+  apt:
+    name: iptables-persistent
+    state: present
+  become: yes
+  when: project_config.security.firewall.enabled
+
+# ============================================
+# Essential connection rules (apply first)
 # ============================================
 
-- name: Reset UFW to default
-  ufw:
-    state: reset
+- name: Allow established and related incoming connections
+  ansible.builtin.iptables:
+    chain: INPUT
+    ctstate: ESTABLISHED,RELATED
+    jump: ACCEPT
+    comment: "Allow established and related connections"
   become: yes
   when: project_config.security.firewall.enabled
 
-- name: Set UFW default policy (deny incoming)
-  ufw:
-    direction: incoming
-    policy: deny
+- name: Accept all incoming traffic on loopback
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: lo
+    jump: ACCEPT
+    comment: "Accept all incoming traffic on loopback"
   become: yes
   when: project_config.security.firewall.enabled
 
-- name: Set UFW default policy (allow outgoing)
-  ufw:
-    direction: outgoing
-    policy: allow
+- name: Accept all outgoing traffic on loopback
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    out_interface: lo
+    jump: ACCEPT
+    comment: "Accept all outgoing traffic on loopback"
   become: yes
   when: project_config.security.firewall.enabled
 
-- name: Allow SSH
-  ufw:
-    rule: allow
-    port: '{{ project_config.server.ssh_port | default("22") }}'
-    proto: tcp
+# ============================================
+# SSH access (critical - must be before any DROP rules)
+# ============================================
+
+- name: Allow SSH on custom port
+  ansible.builtin.iptables:
+    chain: INPUT
+    protocol: tcp
+    destination_port: "{{ project_config.server.ssh_port | default('22') }}"
+    jump: ACCEPT
+    comment: "Allow SSH on port {{ project_config.server.ssh_port | default('22') }}"
   become: yes
   when: project_config.security.firewall.enabled
+
+# ============================================
+# HTTP/HTTPS traffic
+# ============================================
+
+- name: Allow HTTP traffic
+  ansible.builtin.iptables:
+    chain: INPUT
+    protocol: tcp
+    destination_port: '80'
+    jump: ACCEPT
+    comment: "Allow HTTP traffic"
+  become: yes
+  when: project_config.security.firewall.enabled
+
+- name: Allow HTTPS traffic
+  ansible.builtin.iptables:
+    chain: INPUT
+    protocol: tcp
+    destination_port: '443'
+    jump: ACCEPT
+    comment: "Allow HTTPS traffic"
+  become: yes
+  when: project_config.security.firewall.enabled
+
+# ============================================
+# Docker to PostgreSQL (on host)
+# ============================================
+
+- name: Allow PostgreSQL traffic from Docker containers
+  ansible.builtin.iptables:
+    chain: INPUT
+    source: "172.16.0.0/12"
+    protocol: tcp
+    destination_port: '5432'
+    jump: ACCEPT
+    comment: "Accept PostgreSQL traffic from Docker (172.16.0.0/12)"
+  become: yes
+  when: project_config.security.firewall.enabled
+
+# ============================================
+# Additional configured ports
+# ============================================
 
 - name: Allow configured ports
-  ufw:
-    rule: allow
-    port: '{{ item }}'
-    proto: tcp
+  ansible.builtin.iptables:
+    chain: INPUT
+    protocol: tcp
+    destination_port: "{{ item }}"
+    jump: ACCEPT
+    comment: "Allow port {{ item }}"
   loop: "{{ project_config.security.firewall.allowed_ports }}"
   become: yes
   when:
     - project_config.security.firewall.enabled
     - project_config.security.firewall.allowed_ports is defined
+    - project_config.security.firewall.allowed_ports | length > 0
 
-- name: Allow from specific IPs (if configured)
-  ufw:
-    rule: allow
-    from_ip: '{{ item }}'
-  loop: "{{ project_config.security.firewall.allowed_ips }}"
-  become: yes
-  when:
-    - project_config.security.firewall.enabled
-    - project_config.security.firewall.allowed_ips is defined
-    - project_config.security.firewall.allowed_ips | length > 0
+# ============================================
+# Essential outbound traffic
+# ============================================
 
-- name: Enable UFW
-  ufw:
-    state: enabled
-    logging: 'on'
+- name: Allow essential OUTPUT traffic
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    protocol: "{{ item.protocol }}"
+    destination_port: "{{ item.port | default(omit) }}"
+    match: "{{ item.match | default(omit) }}"
+    ctstate: "{{ item.ctstate | default(omit) }}"
+    jump: ACCEPT
+    comment: "{{ item.comment }}"
+  loop:
+    - { protocol: 'all', match: 'conntrack', ctstate: 'RELATED,ESTABLISHED', comment: 'Allow established and related outbound connections' }
+    - { protocol: 'icmp', comment: 'Allow ICMP for network diagnostics' }
+    - { protocol: 'tcp', port: '53', comment: 'Allow outbound DNS queries (TCP)' }
+    - { protocol: 'udp', port: '53', comment: 'Allow outbound DNS queries (UDP)' }
+    - { protocol: 'udp', port: '123', comment: 'Allow outbound NTP for time sync' }
+    - { protocol: 'tcp', port: '9418', comment: 'Allow outbound Git protocol' }
+    - { protocol: 'tcp', port: '80', comment: 'Allow HTTP for web traffic' }
+    - { protocol: 'tcp', port: '443', comment: 'Allow HTTPS for secure web traffic' }
+    - { protocol: 'tcp', port: '25', comment: 'Allow MAIL SMTP for sending emails' }
+    - { protocol: 'tcp', port: '587', comment: 'Allow MAIL SMTP Submission for email submission' }
+    - { protocol: 'tcp', port: '465', comment: 'Allow MAIL SMTPS for secure email sending' }
   become: yes
   when: project_config.security.firewall.enabled
 
-- name: Display firewall status
-  command: ufw status verbose
-  register: ufw_status
+# ============================================
+# Save iptables rules (persistence)
+# ============================================
+
+- name: Save iptables rules for persistence
+  import_tasks: iptables_persistent.yml
+  when: project_config.security.firewall.enabled
+
+# ============================================
+# Display status
+# ============================================
+
+- name: Display iptables INPUT rules
+  command: iptables -L INPUT -n -v --line-numbers
+  register: iptables_input_status
   changed_when: false
   become: yes
   when: project_config.security.firewall.enabled
 
-- name: Show firewall status
+- name: Display iptables OUTPUT rules
+  command: iptables -L OUTPUT -n -v --line-numbers
+  register: iptables_output_status
+  changed_when: false
+  become: yes
+  when: project_config.security.firewall.enabled
+
+- name: Show iptables INPUT status
   debug:
-    var: ufw_status.stdout_lines
+    var: iptables_input_status.stdout_lines
   when:
     - project_config.security.firewall.enabled
-    - ufw_status is defined
+    - iptables_input_status is defined
+
+- name: Show iptables OUTPUT status
+  debug:
+    var: iptables_output_status.stdout_lines
+  when:
+    - project_config.security.firewall.enabled
+    - iptables_output_status is defined
